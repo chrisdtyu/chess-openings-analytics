@@ -1,0 +1,11 @@
+pandas==2.2.3
+numpy==2.2.1
+matplotlib==3.10.1
+seaborn==0.13.2  
+
+berserk==0.13.2
+python-chess==1.999
+python-dotenv==1.1.1
+requests==2.31.0  
+
+psycopg2-binary==2.9.9
