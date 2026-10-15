@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List
 
 import berserk
-from datetime import datetime, timezone
 
 BATCH_SIZE = 300  
 SINCE_DATE = datetime(2020, 1, 1, tzinfo=timezone.utc)
@@ -56,7 +55,8 @@ def main() -> None:
     parser.add_argument("output_pgn", help="Output PGN file path")
     args = parser.parse_args()
 
-    usernames = Path(args.user_list).read_text(encoding="utf-8").splitlines()
+    lines = Path(args.user_list).read_text(encoding="utf-8").splitlines()
+    usernames = [line.strip() for line in lines if line.strip()]
     export_games(usernames, Path(args.output_pgn))
 
 
