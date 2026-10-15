@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS players (
 CREATE TABLE IF NOT EXISTS openings (
     opening_id SERIAL PRIMARY KEY,
     eco        TEXT NOT NULL,
-    name       TEXT NOT NULL,
+    name       TEXT UNIQUE NOT NULL,
     family     TEXT
 );
 
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS games (
     black_id     INTEGER REFERENCES players(player_id),
     white_rating INTEGER,
     black_rating INTEGER,
-    winner       TEXT,
+    winner       TEXT CHECK (winner IN ('white', 'black', 'draw')),
     termination  TEXT,
     ply_count    INTEGER,
     opening_id   INTEGER REFERENCES openings(opening_id),
@@ -27,3 +27,5 @@ CREATE TABLE IF NOT EXISTS games (
 
 CREATE INDEX IF NOT EXISTS idx_games_opening ON games(opening_id);
 CREATE INDEX IF NOT EXISTS idx_games_played_at ON games(played_at);
+CREATE INDEX IF NOT EXISTS idx_games_white ON games(white_id);
+CREATE INDEX IF NOT EXISTS idx_games_black ON games(black_id);

@@ -1,7 +1,10 @@
 venv/
+.venv/
 __pycache__/
 .ipynb_checkpoints/
 *.log
 .env
 openapi.json
-temp/ 
+temp/
+.DS_Store
+data/*.pgn
