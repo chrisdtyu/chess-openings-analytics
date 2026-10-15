@@ -6,29 +6,54 @@
 
 This project analyzes **over 20 000 rapid & blitz games** collected through the **[Lichess API](https://lichess.org/api)** to uncover insights about opening performance at the beginner (≤ 1200 Elo) level.
 
-Using PostgreSQL, I designed a fully-normalized schema, built an automated Python ETL pipeline to ingest raw PGN/JSON game data, and performed in-depth SQL querying to evaluate **opening win rates, popularity trends, and strategic recommendations**.
+Using PostgreSQL, I designed a relational schema (players, games, openings), built a Python ETL pipeline to ingest raw PGN game data, and wrote SQL queries to evaluate **opening win rates, popularity, draw rates, and upset rates**.
 
 ---
 
-## **Data Pipeline & Database Design**
+## **How the Pipeline Works**
 
-1. **Data Collection (Extract)**  
-   - Utilized the Lichess *games/export* endpoint via the `berserk` Python SDK to stream player game data in batches of 300 games  
-   - Filters applied: **time-class = rapid/blitz**, **since 2020-01-01** (configurable), **rated only**. The ≤ 1200 rating scope is enforced by curating the player list itself
-   - The collector saves the raw PGN stream to `data/beginner_games.pgn`
+```
+Lichess API ──► etl/collector.py ──► raw PGN file ──► etl/load.py ──► PostgreSQL ──► SQL queries
+  (berserk)       export games        data/*.pgn      parse, clean,    players /       sql/queries/
+                                                      and load         games /
+                                                                       openings
+```
 
-2. **Data Transformation (Transform)**  
-   - Parsed PGN headers to extract: `white_elo`, `black_elo`, `opening_name`, `opening_eco`, `termination`, `winner`, `time_control`, `moves`  
-   - Normalized openings with ECO codes using the official ECO reference list  
-   - Added derived metrics: `rating_diff`, `is_upset`, `ply_count`
+1. **Extract** (`etl/collector.py`)  
+   - Reads a list of usernames and uses the Lichess *games/export* endpoint via the `berserk` Python SDK to download up to 300 games per player  
+   - Filters applied: **rapid/blitz only**, **rated only**, **since 2020-01-01** (set by a constant in the collector). The ≤ 1200 rating scope is enforced by curating the player list itself  
+   - Writes the raw PGN stream to the output file you give it (e.g. `data/beginner_games.pgn`)
 
-3. **Data Loading (Load)**  
-   - Loaded curated tables into PostgreSQL:
-     - `players(player_id, username, highest_rating)`  
-     - `games(game_id, played_at, white_id, black_id, winner, termination, ply_count, opening_id, rating_diff)`  
-     - `openings(opening_id, eco, name, family)`
+2. **Transform + Load** (`etl/load.py`)  
+   - Parses each game with `python-chess` and extracts: player usernames, `WhiteElo`, `BlackElo`, `Opening`, `ECO`, `Termination`, `Result`, and the game ID and timestamp  
+   - Opening names and ECO codes come directly from Lichess's PGN headers  
+   - Cleans the fields (see Data Cleaning below) and derives `rating_diff` and `ply_count`  
+   - Upserts players, openings, and games into PostgreSQL
 
+3. **Analyze** (`sql/queries/`)  
+   - The analytical queries below are also saved as standalone `.sql` files
 
+---
+
+## **Data Cleaning**
+
+- **Duplicate games:** the same game can appear in two players' exports, so games are keyed on the Lichess game ID and re-inserts are ignored
+- **Players:** upserted by username, keeping the highest rating seen across their games
+- **Openings:** deduplicated by name, since many opening names share one ECO code; `family` is the part of the name before the colon (e.g. "Sicilian Defense: Alapin Variation" → "Sicilian Defense")
+- **Missing ratings:** missing or unknown (`?`) ratings are stored as `NULL` instead of crashing the load, so they don't count as very low ratings in rating filters; `rating_diff` is `NULL` when either rating is missing
+- **Results:** PGN results (`1-0`, `0-1`, `1/2-1/2`) are mapped to `white`, `black`, and `draw`; unfinished games are stored as `NULL`
+- **Timestamps:** the PGN `UTCDate` and `UTCTime` headers are parsed into one timestamp
+- **Bad rows:** games with no game ID or an unparseable date are skipped and counted in the load summary
+
+---
+
+## **Database Design**
+
+`sql/schema.sql` creates three tables, with indexes on the columns used for joins and filters:
+
+- `players(player_id, username, highest_rating)`  
+- `games(game_id, played_at, white_id, black_id, white_rating, black_rating, winner, termination, ply_count, opening_id, rating_diff)`  
+- `openings(opening_id, eco, name, family)`
 
 > See `ERD.md` for a full Entity-Relationship Diagram of the schema.
 
@@ -36,20 +61,20 @@ Using PostgreSQL, I designed a fully-normalized schema, built an automated Pytho
 
 ## **Objective**
 
-The primary objective is to recommend strong, practical openings for beginner chess players. This recommendation is grounded in empirical game data rather than anecdotal advice.
+The primary objective is to find which openings perform well for beginner chess players, grounded in game data rather than anecdotal advice.
 
 Key questions addressed:
 
-- Which openings yield the **highest win rate** for White and Black?  
-- How does **average game length** vary across openings?  
-- What are the **most common trap lines** beginners fall into?  
-- How has opening popularity **trended** over the last 18 months?
+- Which openings yield the **highest win rate** for White and for Black?  
+- How does opening success **differ across rating bands**, and which openings are **stable** across them?  
+- Which openings have been **most popular recently**, including among improving players?  
+- Which openings lead to the **quickest decisive games**, the most **draws**, and the most **upset wins**?
 
 ---
 
 ## **Analytical Queries & Insights**
 
-Below are selected SQL queries that power the analysis. 
+Below are the SQL queries that power the analysis. They are also saved as standalone files in `sql/queries/`.
 
 1. **Top 10 Openings by Win Rate (White ≤ 1200)**
 
@@ -62,12 +87,28 @@ FROM    games g
 JOIN    openings o ON o.opening_id = g.opening_id
 WHERE   g.white_rating <= 1200
 GROUP BY 1
-HAVING  COUNT(*) > 1000  
+HAVING  COUNT(*) > 100  
 ORDER BY 3 DESC
 LIMIT 10;
 ```
 
-2. **Opening Success by Rating Band**
+2. **Top 10 Openings by Win Rate (Black ≤ 1200)**
+
+```sql
+SELECT
+        o.name AS opening,
+        COUNT(*) AS games_played,
+        ROUND(SUM(CASE WHEN g.winner = 'black' THEN 1 ELSE 0 END)::numeric / COUNT(*) * 100, 2) AS black_win_rate
+FROM    games g
+JOIN    openings o ON o.opening_id = g.opening_id
+WHERE   g.black_rating <= 1200
+GROUP BY 1
+HAVING  COUNT(*) > 100
+ORDER BY 3 DESC
+LIMIT 10;
+```
+
+3. **Opening Success by Rating Band**
 
 ```sql
 WITH banded AS (
@@ -87,7 +128,7 @@ GROUP BY 1, 2
 ORDER BY 1, 4 DESC;
 ```
 
-3. **Most Popular Openings Last 6 Months**
+4. **Most Popular Openings Last 6 Months**
 
 ```sql
 SELECT
@@ -101,7 +142,7 @@ ORDER BY 2 DESC
 LIMIT 15;
 ```
 
-4. **Quickest Decisive Games**
+5. **Quickest Decisive Games**
 
 ```sql
 SELECT
@@ -116,7 +157,7 @@ ORDER BY g.ply_count ASC
 LIMIT 20;
 ```
 
-5. **Resilient Openings vs Rating Mismatch**
+6. **Resilient Openings vs Rating Mismatch**
 
 ```sql
 -- upset wins = lower-rated player beats higher-rated player (>=150 Elo gap)
@@ -141,10 +182,10 @@ ORDER BY upset_win_pct DESC
 LIMIT 10;
 ```
 
-6. **Popular Openings Among Improving Players**
+7. **Popular Openings Among Players Who Improved**
 
 ```sql
--- players whose current rating is ≥100 Elo higher than their historical median
+-- players whose highest observed rating is ≥100 Elo above their median rating across all their games
 WITH improvers AS (
     SELECT
         p.player_id
@@ -165,7 +206,7 @@ ORDER BY games DESC
 LIMIT 10;
 ```
 
-7. **Draw Percentage by Opening (≤1200)**
+8. **Draw Percentage by Opening (≤1200)**
 
 ```sql
 SELECT
@@ -181,7 +222,7 @@ ORDER BY draw_pct DESC
 LIMIT 10;
 ```
 
-8. **Stable Openings Across Rating Bands**
+9. **Stable Openings Across Rating Bands**
 ```sql
 WITH tiered AS (
     SELECT
@@ -213,16 +254,13 @@ LIMIT 10;
 
 ## **Learning Outcomes**
 
-- Built a production-grade **Python ETL pipeline**
+- Built a **Python ETL pipeline** that collects, cleans, and loads game data
 - Cleaned and preprocessed **real-world datasets** for analysis 
-- Designed and implemented a **normalized relational schema** to optimize query performance  
+- Designed a **relational schema** with indexes on the columns used for joins and filters
 - Applied advanced **SQL operations** (window functions, subqueries, joins, CTEs) to derive insights
-
-
 
 ---
 
 ## **Conclusion**
 
-This project demonstrates how data engineering and SQL analytics can transform raw chess game data into actionable opening recommendations for beginners.  
-
+This project shows how data engineering and SQL analytics can turn raw chess game data into evidence about which openings work well for beginners.
