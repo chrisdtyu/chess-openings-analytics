@@ -7,8 +7,11 @@ from pathlib import Path
 from typing import Iterable, List
 
 import berserk
+from dotenv import load_dotenv
 
-BATCH_SIZE = 300  
+load_dotenv()
+
+BATCH_SIZE = 300
 SINCE_DATE = datetime(2020, 1, 1, tzinfo=timezone.utc)
 SINCE_MS = int(SINCE_DATE.timestamp() * 1000)
 
