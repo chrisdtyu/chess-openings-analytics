@@ -7,6 +7,6 @@ FROM    games g
 JOIN    openings o ON o.opening_id = g.opening_id
 WHERE   g.white_rating <= 1200
 GROUP BY 1
-HAVING  COUNT(*) > 1000
+HAVING  COUNT(*) > 100
 ORDER BY 3 DESC
 LIMIT 10;

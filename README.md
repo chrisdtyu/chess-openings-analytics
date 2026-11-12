@@ -35,6 +35,43 @@ Lichess API ──► etl/collector.py ──► raw PGN file ──► etl/load
 
 ---
 
+## **How to Run**
+
+1. **Install the dependencies** (Python 3 and PostgreSQL)
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Add your settings** to a `.env` file in the project root
+
+   ```
+   LICHESS_API_TOKEN=your_lichess_token
+   DATABASE_URL=postgresql://localhost:5432/chess
+   ```
+
+3. **Create the database and tables**
+
+   ```bash
+   createdb chess
+   psql -d chess -f sql/schema.sql
+   ```
+
+4. **Collect and load the games** (`players.txt` lists one Lichess username per line)
+
+   ```bash
+   python -m etl.collector players.txt data/beginner_games.pgn
+   python -m etl.load data/beginner_games.pgn
+   ```
+
+5. **Run any query**
+
+   ```bash
+   psql -d chess -f sql/queries/01_top_openings_white_win_rate.sql
+   ```
+
+---
+
 ## **Data Cleaning**
 
 - **Duplicate games:** the same game can appear in two players' exports, so games are keyed on the Lichess game ID and re-inserts are ignored
@@ -72,7 +109,7 @@ Key questions addressed:
 
 ---
 
-## **Analytical Queries & Insights**
+## **Analytical Queries**
 
 Below are the SQL queries that power the analysis. They are also saved as standalone files in `sql/queries/`.
 

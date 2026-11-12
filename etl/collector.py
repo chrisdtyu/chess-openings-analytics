@@ -28,6 +28,7 @@ def export_games(usernames: List[str], out_path: Path) -> None:
 
     client = berserk.Client(token=token, timeout=60)
 
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f_out:
         for username in usernames:
             print(f"Downloading games for {username}…", flush=True)
@@ -38,7 +39,7 @@ def export_games(usernames: List[str], out_path: Path) -> None:
                     rated=True,
                     perf_type="blitz,rapid",
                     openings=True,
-                    moves=False,
+                    moves=True,
                     tags=True,
                     since=SINCE_MS,
                 )
